@@ -1,4 +1,4 @@
-import { createFileRoute, Link, notFound } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { SiteHeader } from "@/components/site/SiteHeader";
 import { useVideos, videoPlaybackUrl, type VideoItem } from "@/lib/store";
 import { Thumb } from "./index";
