@@ -145,11 +145,7 @@ export async function updateVideo(
   id: string,
   patch: { title?: string; category?: string; thumbnail_url?: string | null },
 ) {
-  const dbPatch: Record<string, unknown> = {};
-  if (patch.title !== undefined) dbPatch.title = patch.title;
-  if (patch.category !== undefined) dbPatch.category = patch.category;
-  if (patch.thumbnail_url !== undefined) dbPatch.thumbnail_url = patch.thumbnail_url;
-  const { error } = await supabase.from("videos").update(dbPatch).eq("id", id);
+  const { error } = await supabase.from("videos").update(patch).eq("id", id);
   if (error) throw error;
   fireRefresh();
 }
