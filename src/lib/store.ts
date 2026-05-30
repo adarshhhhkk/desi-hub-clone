@@ -56,7 +56,14 @@ function write<T>(key: string, value: T) {
 }
 
 export function getVideos(): VideoItem[] {
-  return read<VideoItem[]>(VIDEOS_KEY, []);
+  const raw = read<VideoItem[]>(VIDEOS_KEY, []);
+  // Drop legacy entries that used the old { kind: "file", dataUrl } shape.
+  return raw.filter((v) => {
+    if (!v || !v.source) return false;
+    if (v.source.kind === "link") return typeof v.source.url === "string";
+    if (v.source.kind === "file") return typeof (v.source as { blobId?: string }).blobId === "string";
+    return false;
+  });
 }
 export function setVideos(list: VideoItem[]) {
   write(VIDEOS_KEY, list);
