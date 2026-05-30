@@ -17,7 +17,6 @@ import {
   addCategory,
   addVideo,
   deleteVideo,
-  readAsDataUrl,
   removeCategory,
   renameCategory,
   updateVideo,
@@ -26,6 +25,7 @@ import {
   useVideos,
   type VideoItem,
 } from "@/lib/store";
+import { putBlob, resizeImageToDataUrl } from "@/lib/blobs";
 
 export const Route = createFileRoute("/admin")({
   component: AdminPage,
@@ -142,8 +142,14 @@ function UploadVideoForm({ mode }: { mode: "file" | "link" }) {
         source = { kind: "link", url: link.trim() };
       } else {
         if (!file) throw new Error("Video file required");
-        const dataUrl = await readAsDataUrl(file);
-        source = { kind: "file", dataUrl, filename: file.name };
+        const blobId = crypto.randomUUID();
+        await putBlob(blobId, file);
+        source = {
+          kind: "file",
+          blobId,
+          filename: file.name,
+          mimeType: file.type || "video/mp4",
+        };
       }
       addVideo({
         id: crypto.randomUUID(),
@@ -231,7 +237,7 @@ function UploadVideoForm({ mode }: { mode: "file" | "link" }) {
           accept="image/*"
           onChange={async (e) => {
             const f = e.target.files?.[0] ?? null;
-            setThumb(f ? await readAsDataUrl(f) : null);
+            setThumb(f ? await resizeImageToDataUrl(f) : null);
           }}
           className={fileInputClass}
         />
@@ -449,7 +455,7 @@ function EditVideoRow({
           accept="image/*"
           onChange={async (e) => {
             const f = e.target.files?.[0];
-            if (f) setThumb(await readAsDataUrl(f));
+            if (f) setThumb(await resizeImageToDataUrl(f));
           }}
           className={fileInputClass}
         />
