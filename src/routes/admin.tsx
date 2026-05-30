@@ -20,6 +20,7 @@ import {
   deleteVideo,
   removeCategory,
   renameCategory,
+  resizeImageToDataUrl,
   updateVideo,
   uploadThumbnail,
   uploadVideoFile,
