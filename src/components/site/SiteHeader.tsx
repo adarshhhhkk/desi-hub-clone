@@ -3,6 +3,7 @@ import { Search, Menu, LogIn, LogOut, LayoutDashboard, User } from "lucide-react
 import { useState } from "react";
 import logoWoman from "@/assets/logo-woman.png";
 import { login, logout, signup, useSession } from "@/lib/store";
+import { lovable } from "@/integrations/lovable";
 
 type Props = {
   query?: string;
@@ -103,13 +104,24 @@ function AuthModal({ onClose }: { onClose: () => void }) {
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     setErr("");
-    try {
-      const user = mode === "login" ? login(email.trim(), pwd) : signup(email.trim(), pwd);
-      onClose();
-      if (user.isAdmin) navigate({ to: "/admin" });
-    } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : "Failed");
-    }
+    (async () => {
+      try {
+        if (mode === "login") await login(email.trim(), pwd);
+        else await signup(email.trim(), pwd);
+        onClose();
+        navigate({ to: "/" });
+      } catch (e: unknown) {
+        setErr(e instanceof Error ? e.message : "Failed");
+      }
+    })();
+  };
+
+  const google = async () => {
+    setErr("");
+    const result = await lovable.auth.signInWithOAuth("google", {
+      redirect_uri: window.location.origin,
+    });
+    if (result.error) setErr(result.error.message ?? "Google sign-in failed");
   };
 
   return (
@@ -153,6 +165,12 @@ function AuthModal({ onClose }: { onClose: () => void }) {
             {mode === "login" ? "Sign in" : "Sign up"}
           </button>
         </form>
+        <button
+          onClick={google}
+          className="mt-3 h-10 w-full rounded-md border border-border bg-secondary text-sm font-semibold hover:bg-muted"
+        >
+          Continue with Google
+        </button>
         <p className="mt-3 text-center text-xs text-muted-foreground">
           {mode === "login" ? "No account?" : "Already registered?"}{" "}
           <button
