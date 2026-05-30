@@ -1,194 +1,288 @@
-import { useEffect, useState } from "react";
-import { deleteBlob, getBlob } from "./blobs";
+import { useCallback, useEffect, useState } from "react";
+import { supabase } from "@/integrations/supabase/client";
 
-export type VideoSource =
-  | { kind: "link"; url: string }
-  | { kind: "file"; blobId: string; filename: string; mimeType: string };
+// ----- Types -----
 
 export type VideoItem = {
   id: string;
   title: string;
   category: string;
-  thumbnail: string | null;
-  source: VideoSource;
+  thumbnail: string | null; // public URL
+  source_kind: "link" | "file";
+  source_url: string; // playable URL (external link, or public storage URL)
+  storage_path: string | null; // path inside the videos bucket (for admin delete/download)
+  mime_type: string | null;
   hue: number;
-  createdAt: number;
+  created_at: string;
 };
 
-export type User = {
+export type SessionUser = {
   id: string;
   email: string;
-  password: string; // demo only — plaintext in localStorage
   isAdmin: boolean;
 };
 
-const VIDEOS_KEY = "desileaks.videos.v2";
-const CATEGORIES_KEY = "desileaks.categories.v1";
-const USERS_KEY = "desileaks.users.v1";
-const SESSION_KEY = "desileaks.session.v1";
+const REFRESH_EVT = "desileaks:refresh";
+const fireRefresh = () => window.dispatchEvent(new CustomEvent(REFRESH_EVT));
 
-const DEFAULT_CATEGORIES = [
-  "Trending",
-  "Travel",
-  "Food",
-  "Nature",
-  "Music",
-  "Sports",
-  "Comedy",
-  "Dance",
-];
+// ----- Session / admin status -----
 
-const EVT = "desileaks:change";
+export function useSession(): SessionUser | null {
+  const [user, setUser] = useState<SessionUser | null>(null);
 
-function read<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback;
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
+  const load = useCallback(async () => {
+    const { data } = await supabase.auth.getUser();
+    if (!data.user) {
+      setUser(null);
+      return;
+    }
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_admin, email")
+      .eq("id", data.user.id)
+      .maybeSingle();
+    setUser({
+      id: data.user.id,
+      email: profile?.email ?? data.user.email ?? "",
+      isAdmin: !!profile?.is_admin,
+    });
+  }, []);
 
-function write<T>(key: string, value: T) {
-  localStorage.setItem(key, JSON.stringify(value));
-  window.dispatchEvent(new CustomEvent(EVT));
-}
+  useEffect(() => {
+    load();
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      load();
+    });
+    return () => sub.subscription.unsubscribe();
+  }, [load]);
 
-export function getVideos(): VideoItem[] {
-  const raw = read<VideoItem[]>(VIDEOS_KEY, []);
-  // Drop legacy entries that used the old { kind: "file", dataUrl } shape.
-  return raw.filter((v) => {
-    if (!v || !v.source) return false;
-    if (v.source.kind === "link") return typeof v.source.url === "string";
-    if (v.source.kind === "file") return typeof (v.source as { blobId?: string }).blobId === "string";
-    return false;
-  });
-}
-export function setVideos(list: VideoItem[]) {
-  write(VIDEOS_KEY, list);
-}
-export function addVideo(v: VideoItem) {
-  setVideos([v, ...getVideos()]);
-}
-export function updateVideo(id: string, patch: Partial<VideoItem>) {
-  setVideos(getVideos().map((v) => (v.id === id ? { ...v, ...patch } : v)));
-}
-export function deleteVideo(id: string) {
-  const target = getVideos().find((v) => v.id === id);
-  if (target && target.source.kind === "file") {
-    deleteBlob(target.source.blobId).catch(() => undefined);
-  }
-  setVideos(getVideos().filter((v) => v.id !== id));
+  return user;
 }
 
-export function getCategories(): string[] {
-  const list = read<string[] | null>(CATEGORIES_KEY, null);
-  if (!list) {
-    write(CATEGORIES_KEY, DEFAULT_CATEGORIES);
-    return DEFAULT_CATEGORIES;
-  }
-  return list;
-}
-export function setCategories(list: string[]) {
-  write(CATEGORIES_KEY, list);
-}
-export function addCategory(name: string) {
-  const n = name.trim();
-  if (!n) return;
-  const list = getCategories();
-  if (list.some((c) => c.toLowerCase() === n.toLowerCase())) return;
-  setCategories([...list, n]);
-}
-export function renameCategory(oldName: string, newName: string) {
-  const n = newName.trim();
-  if (!n) return;
-  setCategories(getCategories().map((c) => (c === oldName ? n : c)));
-  setVideos(getVideos().map((v) => (v.category === oldName ? { ...v, category: n } : v)));
-}
-export function removeCategory(name: string) {
-  setCategories(getCategories().filter((c) => c !== name));
+export async function logout() {
+  await supabase.auth.signOut();
 }
 
-export function getUsers(): User[] {
-  return read<User[]>(USERS_KEY, []);
-}
-function setUsers(list: User[]) {
-  write(USERS_KEY, list);
-}
-export function getSession(): User | null {
-  const id = read<string | null>(SESSION_KEY, null);
-  if (!id) return null;
-  return getUsers().find((u) => u.id === id) ?? null;
-}
-function setSession(id: string | null) {
-  if (id) write(SESSION_KEY, id);
-  else {
-    localStorage.removeItem(SESSION_KEY);
-    window.dispatchEvent(new CustomEvent(EVT));
-  }
-}
-export function signup(email: string, password: string): User {
-  const users = getUsers();
-  if (users.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
-    throw new Error("Email already registered");
-  }
-  const user: User = {
-    id: crypto.randomUUID(),
+export async function signup(email: string, password: string) {
+  const { error } = await supabase.auth.signUp({
     email,
     password,
-    isAdmin: users.length === 0, // first user is admin
-  };
-  setUsers([...users, user]);
-  setSession(user.id);
-  return user;
-}
-export function login(email: string, password: string): User {
-  const user = getUsers().find(
-    (u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password,
-  );
-  if (!user) throw new Error("Invalid email or password");
-  setSession(user.id);
-  return user;
-}
-export function logout() {
-  setSession(null);
-}
-
-function useStore<T>(getter: () => T): T {
-  const [value, setValue] = useState<T>(getter);
-  useEffect(() => {
-    setValue(getter());
-    const handler = () => setValue(getter());
-    window.addEventListener(EVT, handler);
-    window.addEventListener("storage", handler);
-    return () => {
-      window.removeEventListener(EVT, handler);
-      window.removeEventListener("storage", handler);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  return value;
-}
-
-export const useVideos = () => useStore(getVideos);
-export const useCategories = () => useStore(getCategories);
-export const useSession = () => useStore(getSession);
-
-export function readAsDataUrl(f: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result as string);
-    r.onerror = reject;
-    r.readAsDataURL(f);
+    options: { emailRedirectTo: `${window.location.origin}/` },
   });
+  if (error) throw error;
 }
 
-// Resolve a playable URL for a video. Link sources return immediately; file
-// sources lazily pull the Blob from IndexedDB and wrap it in an object URL.
-export async function resolveVideoUrl(v: VideoItem): Promise<string | null> {
-  if (v.source.kind === "link") return v.source.url;
-  const blob = await getBlob(v.source.blobId);
-  if (!blob) return null;
-  return URL.createObjectURL(blob);
+export async function login(email: string, password: string) {
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+}
+
+// ----- Videos -----
+
+export function useVideos(): VideoItem[] {
+  const [videos, setVideos] = useState<VideoItem[]>([]);
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("videos")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (!error && data) {
+      setVideos(
+        data.map((row) => ({
+          id: row.id,
+          title: row.title,
+          category: row.category,
+          thumbnail: row.thumbnail_url,
+          source_kind: row.source_kind as "link" | "file",
+          source_url: row.source_url ?? "",
+          storage_path: row.storage_path,
+          mime_type: row.mime_type,
+          hue: row.hue ?? 0,
+          created_at: row.created_at,
+        })),
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const onRefresh = () => load();
+    window.addEventListener(REFRESH_EVT, onRefresh);
+    return () => window.removeEventListener(REFRESH_EVT, onRefresh);
+  }, [load]);
+
+  return videos;
+}
+
+export async function addVideo(input: {
+  title: string;
+  category: string;
+  thumbnail_url: string | null;
+  source_kind: "link" | "file";
+  source_url: string;
+  storage_path: string | null;
+  mime_type: string | null;
+  hue: number;
+}) {
+  const { data: userData } = await supabase.auth.getUser();
+  const { error } = await supabase.from("videos").insert({
+    title: input.title,
+    category: input.category,
+    thumbnail_url: input.thumbnail_url,
+    source_kind: input.source_kind,
+    source_url: input.source_url,
+    storage_path: input.storage_path,
+    mime_type: input.mime_type,
+    hue: input.hue,
+    created_by: userData.user?.id ?? null,
+  });
+  if (error) throw error;
+  fireRefresh();
+}
+
+export async function updateVideo(
+  id: string,
+  patch: { title?: string; category?: string; thumbnail_url?: string | null },
+) {
+  const { error } = await supabase.from("videos").update(patch).eq("id", id);
+  if (error) throw error;
+  fireRefresh();
+}
+
+export async function deleteVideo(id: string) {
+  const { data: row } = await supabase
+    .from("videos")
+    .select("storage_path")
+    .eq("id", id)
+    .maybeSingle();
+  if (row?.storage_path) {
+    await supabase.storage.from("videos").remove([row.storage_path]);
+  }
+  const { error } = await supabase.from("videos").delete().eq("id", id);
+  if (error) throw error;
+  fireRefresh();
+}
+
+// ----- Categories -----
+
+export function useCategories(): string[] {
+  const [cats, setCats] = useState<string[]>([]);
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("categories")
+      .select("name")
+      .order("name");
+    if (!error && data) setCats(data.map((r) => r.name));
+  }, []);
+
+  useEffect(() => {
+    load();
+    const onRefresh = () => load();
+    window.addEventListener(REFRESH_EVT, onRefresh);
+    return () => window.removeEventListener(REFRESH_EVT, onRefresh);
+  }, [load]);
+
+  return cats;
+}
+
+export async function addCategory(name: string) {
+  const n = name.trim();
+  if (!n) return;
+  const { error } = await supabase
+    .from("categories")
+    .insert({ name: n });
+  if (error && !error.message.toLowerCase().includes("duplicate")) throw error;
+  fireRefresh();
+}
+
+export async function renameCategory(oldName: string, newName: string) {
+  const n = newName.trim();
+  if (!n || n === oldName) return;
+  const { error } = await supabase
+    .from("categories")
+    .update({ name: n })
+    .eq("name", oldName);
+  if (error) throw error;
+  // Cascade rename onto videos
+  await supabase.from("videos").update({ category: n }).eq("category", oldName);
+  fireRefresh();
+}
+
+export async function removeCategory(name: string) {
+  const { error } = await supabase.from("categories").delete().eq("name", name);
+  if (error) throw error;
+  fireRefresh();
+}
+
+// ----- Storage helpers -----
+
+export async function uploadVideoFile(file: File): Promise<{
+  path: string;
+  publicUrl: string;
+}> {
+  const ext = file.name.split(".").pop() ?? "mp4";
+  const path = `${crypto.randomUUID()}.${ext}`;
+  const { error } = await supabase.storage
+    .from("videos")
+    .upload(path, file, { contentType: file.type, upsert: false });
+  if (error) throw error;
+  const { data } = supabase.storage.from("videos").getPublicUrl(path);
+  return { path, publicUrl: data.publicUrl };
+}
+
+export async function uploadThumbnail(blob: Blob, ext = "jpg"): Promise<string> {
+  const path = `${crypto.randomUUID()}.${ext}`;
+  const { error } = await supabase.storage
+    .from("thumbnails")
+    .upload(path, blob, { contentType: blob.type || "image/jpeg", upsert: false });
+  if (error) throw error;
+  const { data } = supabase.storage.from("thumbnails").getPublicUrl(path);
+  return data.publicUrl;
+}
+
+// Convert a data URL back to a Blob (so resized thumbs from the canvas can be uploaded).
+export function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, b64] = dataUrl.split(",");
+  const mime = /data:([^;]+);/.exec(header)?.[1] ?? "image/jpeg";
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+// Resize an image File to a JPEG data URL no wider than maxW.
+export function resizeImageToDataUrl(
+  file: File,
+  maxW = 480,
+  quality = 0.8,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        reject(new Error("Canvas unsupported"));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL("image/jpeg", quality);
+      URL.revokeObjectURL(url);
+      resolve(dataUrl);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Image load failed"));
+    };
+    img.src = url;
+  });
 }

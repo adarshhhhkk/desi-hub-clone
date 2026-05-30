@@ -16,16 +16,19 @@ import { SiteHeader } from "@/components/site/SiteHeader";
 import {
   addCategory,
   addVideo,
+  dataUrlToBlob,
   deleteVideo,
   removeCategory,
   renameCategory,
+  resizeImageToDataUrl,
   updateVideo,
+  uploadThumbnail,
+  uploadVideoFile,
   useCategories,
   useSession,
   useVideos,
   type VideoItem,
 } from "@/lib/store";
-import { putBlob, resizeImageToDataUrl } from "@/lib/blobs";
 
 export const Route = createFileRoute("/admin")({
   component: AdminPage,
@@ -136,32 +139,38 @@ function UploadVideoForm({ mode }: { mode: "file" | "link" }) {
     if (!category.trim()) return setErr("Category required");
     setBusy(true);
     try {
-      let source: VideoItem["source"];
+      let source_kind: "link" | "file";
+      let source_url: string;
+      let storage_path: string | null = null;
+      let mime_type: string | null = null;
       if (mode === "link") {
         if (!link.trim()) throw new Error("Streamable link required");
-        source = { kind: "link", url: link.trim() };
+        source_kind = "link";
+        source_url = link.trim();
       } else {
         if (!file) throw new Error("Video file required");
-        const blobId = crypto.randomUUID();
-        await putBlob(blobId, file);
-        source = {
-          kind: "file",
-          blobId,
-          filename: file.name,
-          mimeType: file.type || "video/mp4",
-        };
+        const uploaded = await uploadVideoFile(file);
+        source_kind = "file";
+        source_url = uploaded.publicUrl;
+        storage_path = uploaded.path;
+        mime_type = file.type || "video/mp4";
       }
-      addVideo({
-        id: crypto.randomUUID(),
+      let thumbnail_url: string | null = null;
+      if (thumb) {
+        thumbnail_url = await uploadThumbnail(dataUrlToBlob(thumb));
+      }
+      await addVideo({
         title: title.trim(),
         category: category.trim(),
-        thumbnail: thumb,
-        source,
+        thumbnail_url,
+        source_kind,
+        source_url,
+        storage_path,
+        mime_type,
         hue: Math.floor(Math.random() * 360),
-        createdAt: Date.now(),
       });
       if (category.trim() && !categories.includes(category.trim())) {
-        addCategory(category.trim());
+        await addCategory(category.trim());
       }
       setOk("Video published!");
       reset();
@@ -466,12 +475,20 @@ function EditVideoRow({
       <div className="flex gap-2">
         <button
           onClick={() => {
-            updateVideo(video.id, {
-              title: title.trim() || video.title,
-              category: category.trim() || video.category,
-              thumbnail: thumb,
-            });
-            onClose();
+            (async () => {
+              let thumbnail_url: string | null | undefined = undefined;
+              if (thumb !== video.thumbnail) {
+                thumbnail_url = thumb
+                  ? await uploadThumbnail(dataUrlToBlob(thumb))
+                  : null;
+              }
+              await updateVideo(video.id, {
+                title: title.trim() || video.title,
+                category: category.trim() || video.category,
+                ...(thumbnail_url !== undefined ? { thumbnail_url } : {}),
+              });
+              onClose();
+            })();
           }}
           className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90"
         >

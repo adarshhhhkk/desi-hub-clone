@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
 import { SiteHeader } from "@/components/site/SiteHeader";
-import { resolveVideoUrl, useVideos, type VideoItem } from "@/lib/store";
+import { useVideos, type VideoItem } from "@/lib/store";
 import { Thumb } from "./index";
 
 export const Route = createFileRoute("/watch/$id")({
@@ -82,35 +81,7 @@ function WatchPage() {
 }
 
 function Player({ video }: { video: VideoItem }) {
-  const [url, setUrl] = useState<string | null>(
-    video.source.kind === "link" ? video.source.url : null,
-  );
-
-  useEffect(() => {
-    let revoke: string | null = null;
-    let cancelled = false;
-    resolveVideoUrl(video).then((u) => {
-      if (cancelled) {
-        if (u && video.source.kind === "file") URL.revokeObjectURL(u);
-        return;
-      }
-      setUrl(u);
-      if (u && video.source.kind === "file") revoke = u;
-    });
-    return () => {
-      cancelled = true;
-      if (revoke) URL.revokeObjectURL(revoke);
-    };
-  }, [video]);
-
-  if (!url) {
-    return (
-      <div className="flex aspect-video w-full items-center justify-center rounded-lg bg-black text-sm text-muted-foreground">
-        Loading video…
-      </div>
-    );
-  }
-
+  const url = video.source_url;
   const isYoutube = /youtu\.?be/.test(url);
   const isVimeo = /vimeo\.com/.test(url);
 
