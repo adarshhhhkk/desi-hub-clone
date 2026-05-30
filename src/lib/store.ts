@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
+import { deleteBlob, getBlob } from "./blobs";
 
 export type VideoSource =
   | { kind: "link"; url: string }
-  | { kind: "file"; dataUrl: string; filename: string };
+  | { kind: "file"; blobId: string; filename: string; mimeType: string };
 
 export type VideoItem = {
   id: string;
@@ -67,6 +68,10 @@ export function updateVideo(id: string, patch: Partial<VideoItem>) {
   setVideos(getVideos().map((v) => (v.id === id ? { ...v, ...patch } : v)));
 }
 export function deleteVideo(id: string) {
+  const target = getVideos().find((v) => v.id === id);
+  if (target && target.source.kind === "file") {
+    deleteBlob(target.source.blobId).catch(() => undefined);
+  }
   setVideos(getVideos().filter((v) => v.id !== id));
 }
 
@@ -172,6 +177,11 @@ export function readAsDataUrl(f: File): Promise<string> {
   });
 }
 
-export function videoPlaybackUrl(v: VideoItem): string {
-  return v.source.kind === "file" ? v.source.dataUrl : v.source.url;
+// Resolve a playable URL for a video. Link sources return immediately; file
+// sources lazily pull the Blob from IndexedDB and wrap it in an object URL.
+export async function resolveVideoUrl(v: VideoItem): Promise<string | null> {
+  if (v.source.kind === "link") return v.source.url;
+  const blob = await getBlob(v.source.blobId);
+  if (!blob) return null;
+  return URL.createObjectURL(blob);
 }
